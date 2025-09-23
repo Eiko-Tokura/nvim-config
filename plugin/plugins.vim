@@ -178,6 +178,8 @@ call plug#begin('~/.vim/plugged')
 	Plug 'nvim-tree/nvim-web-devicons'
 	Plug 'yetone/avante.nvim', { 'branch': 'main', 'do': 'make' }
 
+	Plug 'NickvanDyke/opencode.nvim'
+
 	Plug 'yuratomo/w3m.vim'
 call plug#end()
 

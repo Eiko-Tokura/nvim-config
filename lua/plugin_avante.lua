@@ -6,11 +6,14 @@ require("avante").setup({
     openai = {
       api_key_name = "OPENAI_API_KEY",
       endpoint = "https://api.openai.com/v1/",
-      model = "o3-mini",
+      model = "codex-mini-latest",
+      -- models to consider now:
+      -- model_name        : input,   cached  , output
+      -- gpt-5-mini        : 0.25/1M, 0.025/1M, 2/1M
+      -- codex-mini-latest : 1.5/1M,  0.375/1M, 6/1M
       timeout = 60000, -- Timeout in milliseconds
       max_tokens = 4096,
       extra_request_body = {
-	temperature = 0,
 	max_completion_tokens = 8192,
 	reasoning_effort = "medium",
       },

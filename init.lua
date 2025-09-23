@@ -18,6 +18,7 @@ require('latex-shortcuts')
 require('plugin_treesitter')
 require('plugin_gitsigns')
 require('plugin_avante')
+require('plugin_opencode')
 require('plugin_mason')
 require('sql')
 vim.cmd [[
