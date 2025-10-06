@@ -21,6 +21,7 @@ require('plugin_avante')
 require('plugin_opencode')
 require('plugin_mason')
 require('plugin_gen_commit')
+require('plugin_ghcid')
 require('sql')
 vim.cmd [[
   autocmd BufRead,BufNewFile *.lean lua require('plugin_lean')

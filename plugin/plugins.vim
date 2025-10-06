@@ -130,7 +130,6 @@ call plug#begin('~/.vim/plugged')
 	Plug 'kana/vim-textobj-user'
 	Plug 'pbrisbin/vim-syntax-shakespeare'
 	Plug 'neovimhaskell/nvim-hs.vim'
-	"Plug 'saep/nvim-hs-ghcid'
 	Plug 'isovector/cornelis', { 'do' : 'stack build' }
 
 	Plug 'tpope/vim-surround'
