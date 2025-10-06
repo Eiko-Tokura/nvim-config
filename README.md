@@ -54,7 +54,7 @@ This repository provides a Neovim configuration focused on improving editing wor
 
 This configuration includes dedicated Haskell tooling. Ghcid and Haskell Language Server support are wired via plugin/plugins.vim. See details in that file for exact mappings and commands.
 
-- Ghcid live error/warning feedback: GhcidQF loads errors into QuickFix; quick access via a convenient key mapping is provided.
+- Ghcid live error/warning feedback: GhcidQF loads errors into QuickFix; quick access via a convenient key mapping is provided. This makes refactoring really fast! like a rocket >w<, I feel 200% faster with this.
 - Haskell LSP via Coc: coc with haskell-language-server-wrapper (--lsp) for real-time diagnostics, go-to-definition, renaming, etc. Root patterns and formatter (ormolu) are configured in Coc settings.
 - Haskell editing helpers: integration with haskell-tools and related plugins as configured in the repo.
 

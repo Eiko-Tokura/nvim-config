@@ -14,6 +14,11 @@ vim.keymap.set("n", "<leader>e", ":GhcidQF<CR>",
 vim.keymap.set("n", "]e", ":QfNextError<CR>", { buffer = true, silent = true, desc = "Next error" })
 vim.keymap.set("n", "[e", ":QfPrevError<CR>", { buffer = true, silent = true, desc = "Prev error" })
 
+-- consider yourself idle after 200ms of no activity
+vim.g.ghcid_watch_idle_ms = 200
+
+-- never auto-jump more frequently than every 800ms
+vim.g.ghcid_watch_min_jump_gap_ms = 800
 -- Optional: how long you need to be idle before watcher may auto-jump (ms).
 -- The watcher NEVER queues a deferred jump; it simply skips if you're active.
 -- Example:

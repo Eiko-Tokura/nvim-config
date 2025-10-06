@@ -3,15 +3,12 @@ local M = {}
 
 -- Robust GHC/ghcid errorformat (supports :l:c, :l:c-c2, (l,c)-(l2,c2))
 M.efm = table.concat({
-  -- Errors
   "%E%f:%l:%c: %trror: %m",
   "%E%f:%l:%c-%*[0-9]: %trror: %m",
   "%E%f:(%l,%c)-(%*\\d,%*\\d): %trror: %m",
-  -- Warnings
   "%W%f:%l:%c: %tarning: %m",
   "%W%f:%l:%c-%*[0-9]: %tarning: %m",
   "%W%f:(%l,%c)-(%*\\d,%*\\d): %tarning: %m",
-  -- Continuations (indented lines incl. bullets and carets)
   "%C%\\s%#%m",
 }, ",")
 
@@ -24,7 +21,7 @@ local function cfile_with_ghc_efm(errfile)
 end
 
 local function safe_jump_to_qf_item(idx)
-  vim.cmd("silent! cc " .. idx) -- open buffer & rough pos
+  vim.cmd("silent! cc " .. idx)
   local qf = vim.fn.getqflist()
   local it = qf[idx]
   if not it or not it.lnum then return end
@@ -82,7 +79,7 @@ end
 function M.next_error() qf_jump_error(1) end
 function M.prev_error() qf_jump_error(-1) end
 
--- ---------- activity tracking (skip auto-jumps while you're active) ----------
+-- ---------- activity tracking ----------
 local uv = vim.loop
 local last_activity_ms = uv.now()
 
@@ -117,10 +114,18 @@ function M.watch(errfile)
   watcher = uv.new_fs_poll()
   watcher:start(errfile, 300, vim.schedule_wrap(function()
     if vim.fn.filereadable(errfile) ~= 1 then return end
-    cfile_with_ghc_efm(errfile)                 -- refresh QF with correct efm
+
+    -- NEW: if you're active, SKIP the update entirely to avoid any side-effects
+    if user_is_active() then return end
+
+    -- Only now pipe results into quickfix
+    cfile_with_ghc_efm(errfile)
+
     local sig, idx = pick_target_signature()    -- prefer first E else first W
-    if not sig or not idx then last_sig = nil; return end
-    if user_is_active() then return end         -- do not jump if you're busy
+    if not sig or not idx then
+      last_sig = nil
+      return
+    end
     if sig ~= last_sig then
       safe_jump_to_qf_item(idx)
       last_sig = sig
@@ -136,7 +141,7 @@ function M.unwatch()
   vim.notify("Stopped watching ghcid output")
 end
 
--- ---------- setup (commands + qf window tweaks) ----------
+-- ---------- setup ----------
 function M.setup()
   if M._setup_done then return end
   M._setup_done = true
@@ -149,10 +154,20 @@ function M.setup()
 
   vim.api.nvim_create_user_command("GhcidWatch", function(opts)
     M.watch(opts.args ~= "" and opts.args or nil)
-  end, { nargs = "?" })
+  end, {})
 
   vim.api.nvim_create_user_command("GhcidUnwatch", function()
     M.unwatch()
+  end, {})
+
+  -- NEW: quick status to verify detector timing (optional)
+  vim.api.nvim_create_user_command("GhcidWatchStatus", function()
+    local idle_ms = (vim.g.ghcid_watch_idle_ms or 200)
+    local delta = uv.now() - (last_activity_ms or 0)
+    vim.notify(string.format(
+      "GhcidWatch:\n  idle_ms=%d\n  since_activity=%d ms\n  active? %s",
+      idle_ms, delta, (delta < idle_ms) and "YES" or "no"
+    ))
   end, {})
 
   -- QF window: show multi-line entries; keep default continuation "|| ..." lines
@@ -162,8 +177,6 @@ function M.setup()
       vim.wo.wrap        = true
       vim.wo.linebreak   = true
       vim.wo.breakindent = true
-      -- DO NOT touch quickfixtextfunc here; it's a GLOBAL option.
-      -- Leaving it nil preserves multi-line continuation lines.
     end,
   })
 end
