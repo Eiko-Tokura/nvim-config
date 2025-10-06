@@ -20,6 +20,7 @@ require('plugin_gitsigns')
 require('plugin_avante')
 require('plugin_opencode')
 require('plugin_mason')
+require('plugin_gen_commit')
 require('sql')
 vim.cmd [[
   autocmd BufRead,BufNewFile *.lean lua require('plugin_lean')
