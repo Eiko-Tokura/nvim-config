@@ -35,6 +35,28 @@ local defaults = {
 
 local cfg = vim.deepcopy(defaults)
 
+-- Pretty multi-line quickfix rendering that preserves continuation lines
+_G.GhcidRocketQFTF = function(info)
+  local qf = vim.fn.getqflist({ id = info.id, items = 1 }).items
+  local out = {}
+  for i = info.start_idx, info.end_idx do
+    local it = qf[i] or {}
+    local text = it.text or ""
+    if it.valid == 1 and (it.lnum or 0) > 0 then
+      local fname = it.filename ~= "" and it.filename or vim.fn.bufname(it.bufnr or 0)
+      local typ = (it.type == "E" and "error") or (it.type == "W" and "warning") or ""
+      local lnum = it.lnum or 0
+      local col  = it.col or 0
+      -- Header line (keep it compact; you can drop 'col %d' if you prefer)
+      out[#out+1] = string.format("%s|%d col %d %s| %s", fname, lnum, col, typ, text)
+    else
+      -- Continuation lines (from %C) — show as multi-line with "|| "
+      out[#out+1] = "|| " .. text
+    end
+  end
+  return out
+end
+
 function M.setup(opts)
   if opts then
     -- shallow-merge top-level, then merge backends if provided
