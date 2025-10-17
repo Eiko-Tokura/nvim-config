@@ -1,18 +1,47 @@
 -- ghcid_rocket/init.lua
 local M = {}
 
--- Robust GHC/ghcid errorformat (supports :l:c, :l:c-c2, (l,c)-(l2,c2))
+-- ========================
+-- Robust GHC/ghcid errorformat
+-- ========================
+-- Covers:
+--   file:line:col: error/warning:
+--   file:line:col-col2: error/warning:
+--   file:(line,col)-(line2,col2): error/warning:
+--   file:(line,col): error/warning:
+-- …and tolerates presence/absence of a space before 'error:'/'warning:'.
 M.efm = table.concat({
+  -- Errors (simple, col-range)
   "%E%f:%l:%c: %trror: %m",
   "%E%f:%l:%c-%*[0-9]: %trror: %m",
+
+  -- Errors (tuple spans)
   "%E%f:(%l,%c)-(%*\\d,%*\\d): %trror: %m",
+  "%E%f:(%l,%c)-(%*\\d,%*\\d):%trror: %m",  -- no-space variant
+
+  -- Errors (single tuple location)
+  "%E%f:(%l,%c): %trror: %m",
+  "%E%f:(%l,%c):%trror: %m",               -- no-space variant
+
+  -- Warnings (simple, col-range)
   "%W%f:%l:%c: %tarning: %m",
   "%W%f:%l:%c-%*[0-9]: %tarning: %m",
+
+  -- Warnings (tuple spans)
   "%W%f:(%l,%c)-(%*\\d,%*\\d): %tarning: %m",
+  "%W%f:(%l,%c)-(%*\\d,%*\\d):%tarning: %m", -- no-space variant
+
+  -- Warnings (single tuple location)
+  "%W%f:(%l,%c): %tarning: %m",
+  "%W%f:(%l,%c):%tarning: %m",               -- no-space variant
+
+  -- Continuation lines (indented bullets/caret blocks)
   "%C%\\s%#%m",
 }, ",")
 
--- ---------- helpers ----------
+-- ========================
+-- helpers
+-- ========================
 local function cfile_with_ghc_efm(errfile)
   local prev = vim.o.errorformat
   vim.o.errorformat = M.efm
@@ -21,7 +50,7 @@ local function cfile_with_ghc_efm(errfile)
 end
 
 local function safe_jump_to_qf_item(idx)
-  vim.cmd("silent! cc " .. idx)
+  vim.cmd("silent! cc " .. idx) -- open buffer & rough pos
   local qf = vim.fn.getqflist()
   local it = qf[idx]
   if not it or not it.lnum then return end
@@ -63,7 +92,9 @@ local function qf_jump_error(delta)
   vim.notify(delta > 0 and "No next error" or "No previous error", vim.log.levels.INFO)
 end
 
--- ---------- public actions ----------
+-- ========================
+-- public actions
+-- ========================
 function M.open_first_issue(errfile)
   errfile = errfile or "errors.err"
   if vim.fn.filereadable(errfile) ~= 1 then
@@ -79,7 +110,9 @@ end
 function M.next_error() qf_jump_error(1) end
 function M.prev_error() qf_jump_error(-1) end
 
--- ---------- activity tracking ----------
+-- ========================
+-- activity tracking (skip auto-updates while you're active)
+-- ========================
 local uv = vim.loop
 local last_activity_ms = uv.now()
 
@@ -104,7 +137,9 @@ local function user_is_active()
   return (uv.now() - last_activity_ms) < idle_ms
 end
 
--- ---------- watcher ----------
+-- ========================
+-- watcher
+-- ========================
 local watcher, last_sig
 
 function M.watch(errfile)
@@ -115,10 +150,9 @@ function M.watch(errfile)
   watcher:start(errfile, 300, vim.schedule_wrap(function()
     if vim.fn.filereadable(errfile) ~= 1 then return end
 
-    -- NEW: if you're active, SKIP the update entirely to avoid any side-effects
+    -- Pre-flight: if you're active, do NOT update QF (prevents any downstream jumps)
     if user_is_active() then return end
 
-    -- Only now pipe results into quickfix
     cfile_with_ghc_efm(errfile)
 
     local sig, idx = pick_target_signature()    -- prefer first E else first W
@@ -141,7 +175,55 @@ function M.unwatch()
   vim.notify("Stopped watching ghcid output")
 end
 
--- ---------- setup ----------
+-- ========================
+-- focus current file (QoL)
+-- ========================
+local last_full_qf -- to be able to restore
+
+local function realpath(path)
+  if not path or path == "" then return nil end
+  return (vim.loop.fs_realpath(path) or path)
+end
+
+vim.api.nvim_create_user_command("GhcidFocusHere", function()
+  local curfile = realpath(vim.fn.expand("%:p"))
+  if not curfile or curfile == "" then
+    vim.notify("ghcid-rocket: no current file to focus", vim.log.levels.WARN)
+    return
+  end
+  local full = vim.fn.getqflist()
+  if not full or #full == 0 then
+    vim.notify("ghcid-rocket: quickfix is empty", vim.log.levels.INFO)
+    return
+  end
+  last_full_qf = full
+  local filtered = {}
+  for _, it in ipairs(full) do
+    local f = it.filename ~= "" and it.filename or vim.fn.bufname(it.bufnr or 0)
+    if realpath(f) == curfile then
+      table.insert(filtered, it)
+    end
+  end
+  vim.fn.setqflist(filtered, "r")
+  vim.cmd("cwindow")
+  if #filtered > 0 then vim.cmd("cc 1") end
+  vim.notify(("ghcid-rocket: focused to current file (%d items)"):format(#filtered))
+end, {})
+
+vim.api.nvim_create_user_command("GhcidFocusAll", function()
+  if last_full_qf and #last_full_qf > 0 then
+    vim.fn.setqflist(last_full_qf, "r")
+    vim.cmd("cwindow | cc 1")
+    vim.notify("ghcid-rocket: restored full quickfix list")
+  else
+    -- Fallback: reload from errors.err then open
+    M.open_first_issue()
+  end
+end, {})
+
+-- ========================
+-- setup
+-- ========================
 function M.setup()
   if M._setup_done then return end
   M._setup_done = true
@@ -160,17 +242,7 @@ function M.setup()
     M.unwatch()
   end, {})
 
-  -- NEW: quick status to verify detector timing (optional)
-  vim.api.nvim_create_user_command("GhcidWatchStatus", function()
-    local idle_ms = (vim.g.ghcid_watch_idle_ms or 200)
-    local delta = uv.now() - (last_activity_ms or 0)
-    vim.notify(string.format(
-      "GhcidWatch:\n  idle_ms=%d\n  since_activity=%d ms\n  active? %s",
-      idle_ms, delta, (delta < idle_ms) and "YES" or "no"
-    ))
-  end, {})
-
-  -- QF window: show multi-line entries; keep default continuation "|| ..." lines
+  -- QF window: multi-line entries; don't override quickfixtextfunc (global)
   vim.api.nvim_create_autocmd("FileType", {
     pattern = "qf",
     callback = function()
@@ -179,6 +251,16 @@ function M.setup()
       vim.wo.breakindent = true
     end,
   })
+
+  -- Optional status helper
+  vim.api.nvim_create_user_command("GhcidWatchStatus", function()
+    local idle_ms = (vim.g.ghcid_watch_idle_ms or 200)
+    local delta = uv.now() - (last_activity_ms or 0)
+    vim.notify(string.format(
+      "GhcidWatch:\n  idle_ms=%d\n  since_activity=%d ms\n  active? %s",
+      idle_ms, delta, (delta < idle_ms) and "YES" or "no"
+    ))
+  end, {})
 end
 
 return M
