@@ -1,12 +1,17 @@
--- send_selection.lua
--- Drop this in your init.lua or require it from somewhere.
+-- send_to_terminal.lua
 
 --[[
-Functional-style helpers + type annotations.
-We:
-1. get visual text
+We provide two commands:
+
+:SendCmd  -- send visual selection to terminal, stay where you are
+:RunCmd   -- send visual selection to terminal, then focus that terminal window
+
+Both:
+1. read visual selection
 2. find or create terminal
 3. send text
+
+We add a tiny difference in step 4.
 ]]
 
 ------------------------------------------------------------
@@ -36,7 +41,7 @@ local function get_visual_text()
 end
 
 ------------------------------------------------------------
--- 2. find existing terminal
+-- 2. find existing terminal buffer / window
 ------------------------------------------------------------
 
 ---Return buffer number of an existing terminal, or nil.
@@ -50,18 +55,37 @@ local function find_terminal_buf()
   return nil
 end
 
+---Return window id that is currently showing a given buffer, or nil.
+---@param buf integer
+---@return integer|nil
+local function find_window_with_buf(buf)
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == buf then
+      return win
+    end
+  end
+  return nil
+end
+
 ------------------------------------------------------------
 -- 3. open a bottom terminal
 ------------------------------------------------------------
 
----Open a bottom split terminal and return its buffer number.
----@return integer
-local function open_bottom_terminal()
+---Open a bottom split terminal and return its buffer AND window.
+---If stay == true, we'll go back to previous window.
+---@param stay boolean
+---@return integer term_buf
+---@return integer term_win
+local function open_bottom_terminal(stay)
+  -- remember current window
+  local prev_win = vim.api.nvim_get_current_win()
   vim.cmd("botright split | terminal")
+  local term_win = vim.api.nvim_get_current_win()
   local term_buf = vim.api.nvim_get_current_buf()
-  -- go back to previous window
-  vim.cmd("wincmd p")
-  return term_buf
+  if stay then
+    vim.api.nvim_set_current_win(prev_win)
+  end
+  return term_buf, term_win
 end
 
 ------------------------------------------------------------
@@ -81,11 +105,32 @@ local function send_to_terminal(term_buf, text)
 end
 
 ------------------------------------------------------------
--- 5. main action
+-- 5a. main action for :SendCmd  (don't jump)
 ------------------------------------------------------------
 
----Send current visual selection to a terminal (create if missing).
-local function run_selection()
+---Send selection, do not move cursor.
+local function send_cmd()
+  local text = get_visual_text()
+  if not text or text == "" then
+    vim.notify("No visual selection to send", vim.log.levels.WARN)
+    return
+  end
+
+  local term_buf = find_terminal_buf()
+  if not term_buf then
+    -- open but return to current window
+    term_buf = open_bottom_terminal(true)
+  end
+
+  send_to_terminal(term_buf, text)
+end
+
+------------------------------------------------------------
+-- 5b. main action for :RunCmd  (jump to terminal)
+------------------------------------------------------------
+
+---Send selection, then focus the terminal window.
+local function run_cmd()
   local text = get_visual_text()
   if not text or text == "" then
     vim.notify("No visual selection to run", vim.log.levels.WARN)
@@ -93,29 +138,40 @@ local function run_selection()
   end
 
   local term_buf = find_terminal_buf()
+  local term_win = nil
+
   if not term_buf then
-    term_buf = open_bottom_terminal()
+    -- open and STAY in the terminal (stay = false)
+    term_buf, term_win = open_bottom_terminal(false)
+  else
+    -- we already have a terminal buffer; find its window
+    term_win = find_window_with_buf(term_buf)
+    if not term_win then
+      -- terminal buffer exists but not visible -> open a split showing it
+      -- simplest is to open a new terminal again:
+      term_buf, term_win = open_bottom_terminal(false)
+    else
+      -- focus that window
+      vim.api.nvim_set_current_win(term_win)
+    end
   end
 
   send_to_terminal(term_buf, text)
+
+  -- ensure we are in terminal window
+  if term_win and vim.api.nvim_win_is_valid(term_win) then
+    vim.api.nvim_set_current_win(term_win)
+  end
 end
 
 ------------------------------------------------------------
 -- 6. Ex commands
 ------------------------------------------------------------
--- Use in visual mode:
---   :Run
---   :Exec
---   :RunSelection
 
-vim.api.nvim_create_user_command("RunSelection", function()
-  run_selection()
+vim.api.nvim_create_user_command("SendCmd", function()
+  send_cmd()
 end, { range = true })
 
-vim.api.nvim_create_user_command("Run", function()
-  run_selection()
-end, { range = true })
-
-vim.api.nvim_create_user_command("Exec", function()
-  run_selection()
+vim.api.nvim_create_user_command("RunCmd", function()
+  run_cmd()
 end, { range = true })
