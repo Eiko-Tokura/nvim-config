@@ -17,6 +17,7 @@ require("avante").setup({
       extra_request_body = {
 	max_completion_tokens = 8192,
 	reasoning_effort = "medium",
+	temperature = 1,
       },
     },
     ollama = {

@@ -120,7 +120,8 @@ call plug#begin('~/.vim/plugged')
 	Plug 'lambdalisue/suda.vim'
 
 	Plug 'madox2/vim-ai', {'branch': 'main'}
-	Plug 'github/copilot.vim'
+	"Plug 'github/copilot.vim'
+	Plug 'supermaven-inc/supermaven-nvim'
 	"Plug 'dense-analysis/neural'
         Plug 'elpiloto/significant.nvim'
 
@@ -265,7 +266,7 @@ endif
 " Coc " Coc " Coc " Coc " Coc " Coc " Coc " Coc " Coc " Coc " Coc " Coc " Coc " Coc " Coc " Coc " Coc
 " Coc " Coc " Coc " Coc " Coc " Coc " Coc " Coc " Coc " Coc " Coc " Coc " Coc " Coc " Coc " Coc " Coc
 
-let g:coc_global_extensions = ['coc-python', 'coc-yank']
+let g:coc_global_extensions = ['coc-pyright', 'coc-yank', 'coc-rust-analyzer']
 " Highlight the symbol and its references when holding the cursor
 "autocmd CursorHold * silent call CocActionAsync('highlight')
 
@@ -345,6 +346,14 @@ nmap <leader><S-F>  <Plug>(coc-format-selected)
                           \        "maxCompletions": 40,
                           \        "plugin": {
 	                  \          "stan": { "globalOn": "true" },
+                          \          "rename": { "config": { "crossModule": "true" } },
+                          \          "hlint" : { "config" : { "flags" :
+                          \                        [ "--with-group=use-lens"
+                          \                        , "--with-group=use-th-quotes"
+                          \                        , "--with-group=generalize"
+                          \                        ]
+                          \                      }
+                          \          }
                           \        }
                           \      }
                           \    }
@@ -381,7 +390,7 @@ augroup markdownFormula
 	autocmd FileType markdown syntax region markdownMathDisplay start="\$\$" skip="\\\\\|\\\$\$" end="\$\$" contains=@NoSpell keepend
 	autocmd FileType markdown syntax region markdownMathDisplay start="^\s*\\begin{align\*}" end="^\s*\\end{align\*}" contains=@NoSpell keepend
 	autocmd FileType markdown syntax region markdownBlockquote start="^\s*```" end="^\s*```" contains=@NoSpell keepend
-	autocmd FileType markdown TSDisable highlight
+	" autocmd FileType markdown TSDisable highlight
 
 	" Exclude spell checking in inline code (`...`)
 	autocmd FileType markdown syntax region markdownCodeInline start="`" skip="\\\\\|\\\`" end="`" contains=@NoSpell keepend
