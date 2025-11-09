@@ -19,36 +19,66 @@ local last_activity_ms = uv.now() -- Timestamp of last user keypress/movement
 local last_save_ms = uv.now() -- Timestamp of last buffer save
 
 -- ========================
--- ## Robust GHC/ghcid errorformat
+-- Robust GHC/ghcid errorformat
 -- ========================
--- This 'errorformat' string is designed to parse various
--- output formats from GHC and ghcid.
+-- This version is corrected based on real-world ghcid output.
+-- It fixes two bugs from the original:
+--   1. Replaced buggy `%trror:` with ` error: `
+--   2. Fixed incorrect tuple-span parsing `(%*\\d,%*\\d)`
+--      with the correct `scanf`-style `(%*[0-9],%*[0-9])`
+--      to discard end-spans like (85,13).
+-- It also adds robust continuation patterns for modern GHC errors.
 M.efm = table.concat({
-  -- Errors (simple, col-range)
-  "%E%f:%l:%c: %trror: %m",
-  "%E%f:%l:%c-%*[0-9]: %trror: %m",
+  -- == Errors ==
 
-  -- Errors (tuple spans)
-  "%E%f:(%l,%c)-(%*\\d,%*\\d): %trror: %m",
-  "%E%f:(%l,%c)-(%*\\d,%*\\d):%trror: %m", -- no-space variant
+  -- Matches: /path/to/File.hs:(79,12)-(85,13): error: ...
+  "%E%f:(%l,%c)-(%*[0-9],%*[0-9]): error: %m",
+  "%E%f:(%l,%c)-(%*[0-9],%*[0-9]):error: %m", -- no-space variant
 
-  -- Errors (single tuple location)
-  "%E%f:(%l,%c): %trror: %m",
-  "%E%f:(%l,%c):%trror: %m", -- no-space variant
+  -- Matches: /path/to/File.hs:45:12-16: error: ...
+  "%E%f:%l:%c-%*[0-9]: error: %m",
+  "%E%f:%l:%c-%*[0-9]:error: %m", -- no-space variant
 
-  -- Warnings (simple, col-range)
-  "%W%f:%l:%c: %tarning: %m",
-  "%W%f:%l:%c-%*[0-9]: %tarning: %m",
+  -- Matches: /path/to/File.hs:(79,12): error: ... (single tuple)
+  "%E%f:(%l,%c): error: %m",
+  "%E%f:(%l,%c):error: %m", -- no-space variant
 
-  -- Warnings (tuple spans)
-  "%W%f:(%l,%c)-(%*\\d,%*\\d): %tarning: %m",
-  "%W%f:(%l,%c)-(%*\\d,%*\\d):%tarning: %m", -- no-space variant
+  -- Matches: /path/to/File.hs:45:12: error: ... (simple col)
+  "%E%f:%l:%c: error: %m",
+  "%E%f:%l:%c:error: %m", -- no-space variant
 
-  -- Warnings (single tuple location)
-  "%W%f:(%l,%c): %tarning: %m",
-  "%W%f:(%l,%c):%tarning: %m", -- no-space variant
+  -- == Warnings ==
 
-  -- Continuation lines (indented bullets/caret blocks)
+  -- Matches: /path/to/File.hs:(29,15)-(33,2): warning: ...
+  "%W%f:(%l,%c)-(%*[0-9],%*[0-9]): warning: %m",
+  "%W%f:(%l,%c)-(%*[0-9],%*[0-9]):warning: %m", -- no-space variant
+
+  -- Matches: /path/to/File.hs:3:1-27: warning: ...
+  "%W%f:%l:%c-%*[0-9]: warning: %m",
+  "%W%f:%l:%c-%*[0-9]:warning: %m", -- no-space variant
+
+  -- Matches: /path/to/File.hs:(29,15): warning: ... (single tuple)
+  "%W%f:(%l,%c): warning: %m",
+  "%W%f:(%l,%c):warning: %m", -- no-space variant
+
+  -- Matches: /path/to/File.hs:3:1: warning: ... (simple col)
+  "%W%f:%l:%c: warning: %m",
+  "%W%f:%l:%c:warning: %m", -- no-space variant
+
+  -- == Continuations (Order is important!) ==
+
+  -- Matches: 45 |   botId <- query
+  "%C%\\d%# | %m",
+
+  -- Matches:    |            ^^^^^
+  -- (Note: also catches `  | ^^^^^^^^^...` lines)
+  "%C%\\s%#| %m",
+
+  -- Matches:     • Couldn't match...
+  "%C%\\s%#• %m",
+
+  -- Matches:       from the context: ...
+  -- (Catches any other indented line as a fallback)
   "%C%\\s%#%m",
 }, ",")
 
@@ -353,15 +383,15 @@ function M.setup()
   setup_user_state_tracking()
 
   -- Register user commands
-  vim.api.nvim_create_user_command("GhcidQF", function(opts)
+  vim.api.nvim_create_user_command("GQF", function(opts)
     M.open_first_issue(opts.args ~= "" and opts.args or nil)
   end, { nargs = "?" })
 
-  vim.api.nvim_create_user_command("GhcidWatch", function(opts)
+  vim.api.nvim_create_user_command("GW", function(opts)
     M.watch(opts.args ~= "" and opts.args or nil)
   end, { nargs = "?" }) -- Allow optional errfile arg
 
-  vim.api.nvim_create_user_command("GhcidUnwatch", function()
+  vim.api.nvim_create_user_command("GU", function()
     M.unwatch()
   end, {})
 
@@ -379,7 +409,7 @@ function M.setup()
   })
 
   -- Optional status/debug helper
-  vim.api.nvim_create_user_command("GhcidWatchStatus", function()
+  vim.api.nvim_create_user_command("GWStatus", function()
     local idle_ms = (vim.g.ghcid_watch_idle_ms or 200)
     local now = uv.now()
     local since_activity = now - last_activity_ms
