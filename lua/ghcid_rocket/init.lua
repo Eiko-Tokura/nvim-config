@@ -8,26 +8,22 @@ local uv = vim.loop
 -- Centralized state variables for the module
 
 -- Watcher state
-local watcher = nil -- The libuv fs_poll handle
-local last_sig = nil -- Signature of the last-jumped-to error
+local watcher = nil ---@type uv_fs_poll_t|nil
+local last_sig = nil ---@type string|nil
 
--- QoL Focus state
-local last_full_qf = nil -- Cache of the full quickfix list
+-- Jump-back state
+local last_jump_origin = nil ---@type {win: integer, pos: {integer, integer}}|nil
 
 -- User activity state
-local last_activity_ms = uv.now() -- Timestamp of last user keypress/movement
-local last_save_ms = uv.now() -- Timestamp of last buffer save
+local last_activity_ms = uv.now()
+local last_save_ms = uv.now()
+
+-- Buffer ignore list
+local ignored_buffers = {} ---@type table<integer, boolean>
 
 -- ========================
 -- Robust GHC/ghcid errorformat
 -- ========================
--- This version is corrected based on real-world ghcid output.
--- It fixes two bugs from the original:
---   1. Replaced buggy `%trror:` with ` error: `
---   2. Fixed incorrect tuple-span parsing `(%*\\d,%*\\d)`
---      with the correct `scanf`-style `(%*[0-9],%*[0-9])`
---      to discard end-spans like (85,13).
--- It also adds robust continuation patterns for modern GHC errors.
 M.efm = table.concat({
   -- == Errors ==
 
@@ -87,7 +83,7 @@ M.efm = table.concat({
 -- ========================
 
 --- Loads an error file into the quickfix list using the custom GHC errorformat.
--- @param errfile string The path to the error file.
+--- @param errfile string The path to the error file.
 local function cfile_with_ghc_efm(errfile)
   local prev = vim.o.errorformat
   vim.o.errorformat = M.efm
@@ -95,11 +91,20 @@ local function cfile_with_ghc_efm(errfile)
   vim.o.errorformat = prev
 end
 
+--- Saves the current cursor position before a jump.
+local function save_jump_origin()
+  last_jump_origin = {
+    win = vim.api.nvim_get_current_win(),
+    pos = vim.api.nvim_win_get_cursor(0), -- {lnum, col}
+  }
+end
+
 --- Safely jumps to a quickfix item by its index.
--- This is safer than `vim.cmd("cc " .. idx)` alone, as it
--- correctly sets the cursor column and handles missing items.
--- @param idx number The 1-based index in the quickfix list.
+--- @param idx number The 1-based index in the quickfix list.
 local function safe_jump_to_qf_item(idx)
+  -- Save position *before* jumping
+  save_jump_origin()
+
   vim.cmd("silent! cc " .. idx) -- Open buffer & rough pos
   local qf = vim.fn.getqflist()
   local it = qf[idx]
@@ -112,9 +117,8 @@ local function safe_jump_to_qf_item(idx)
 end
 
 --- Finds the "best" item to jump to in the quickfix list.
--- Priority: 1. First Error, 2. First Warning.
--- @return string|nil A unique signature (e.g., "b:1:10:5") for the target.
--- @return number|nil The 1-based index of the target in the QF list.
+--- @return string|nil signature A unique signature (e.g., "b:1:10:5") for the target.
+--- @return number|nil index The 1-based index of the target in the QF list.
 local function pick_target_signature()
   local qf = vim.fn.getqflist()
   local first_warn_idx = nil
@@ -138,12 +142,11 @@ local function pick_target_signature()
 end
 
 --- Jumps to the next/previous error in the quickfix list.
--- @param delta number 1 for next, -1 for previous.
+--- @param delta number 1 for next, -1 for previous.
 local function qf_jump_error(delta)
   local qf = vim.fn.getqflist()
   if #qf == 0 then return end
 
-  -- Get current QF index, or start from 0 if not on a QF item
   local cur = vim.fn.getqflist({ idx = 0 }).idx
   local i = cur + delta
 
@@ -162,8 +165,8 @@ end
 -- ## Public Actions
 -- ========================
 
---- Public function to manually load the error file and jump to the first issue.
--- @param errfile string|nil Path to error file. Defaults to "errors.err".
+--- Manually loads the error file and jumps to the first issue.
+--- @param errfile string|nil Path to error file. Defaults to "errors.err".
 function M.open_first_issue(errfile)
   errfile = errfile or "errors.err"
   if vim.fn.filereadable(errfile) ~= 1 then
@@ -187,6 +190,50 @@ end
 --- Jumps to the previous error in the quickfix list.
 function M.prev_error()
   qf_jump_error(-1)
+end
+
+--- Jumps back to the position before the last automatic jump.
+function M.jump_back()
+  if not last_jump_origin then
+    vim.notify("ghcid-rocket: No jump origin stored.", vim.log.levels.WARN)
+    return
+  end
+
+  local origin = last_jump_origin
+  -- Restore window focus first
+  pcall(vim.api.nvim_set_current_win, origin.win)
+  -- Then restore cursor
+  pcall(vim.api.nvim_win_set_cursor, origin.win, origin.pos)
+  -- Clear the origin so we don't jump back multiple times by mistake
+  last_jump_origin = nil
+end
+
+--- Adds the current buffer to the "no jump on save" list.
+function M.ignore_current_buffer()
+  local bufnr = vim.api.nvim_get_current_buf()
+  if ignored_buffers[bufnr] then
+    vim.notify("ghcid-rocket: Buffer " .. bufnr .. " is already ignored.", vim.log.levels.INFO)
+    return
+  end
+  ignored_buffers[bufnr] = true
+  vim.notify("ghcid-rocket: Ignoring saves from buffer " .. bufnr .. ".", vim.log.levels.INFO)
+end
+
+--- Removes the current buffer from the "no jump on save" list.
+function M.unignore_current_buffer()
+  local bufnr = vim.api.nvim_get_current_buf()
+  if not ignored_buffers[bufnr] then
+    vim.notify("ghcid-rocket: Buffer " .. bufnr .. " was not ignored.", vim.log.levels.INFO)
+    return
+  end
+  ignored_buffers[bufnr] = nil
+  vim.notify("ghcid-rocket: No longer ignoring saves from buffer " .. bufnr .. ".", vim.log.levels.INFO)
+end
+
+--- Clears the "no jump on save" list.
+function M.clear_ignored_buffers()
+  ignored_buffers = {}
+  vim.notify("ghcid-rocket: Cleared all ignored buffers.", vim.log.levels.INFO)
 end
 
 -- ========================
@@ -215,21 +262,33 @@ local function setup_user_state_tracking()
   end
 
   -- Track saves
+  -- This is now restored to its simple, faithful version.
+  -- It *always* records the last activity and save time.
   vim.api.nvim_create_autocmd("BufWritePost", {
     group = grp,
     pattern = "*",
     callback = function()
-      last_save_ms = uv.now()
-      -- A save also counts as activity
-      last_activity_ms = last_save_ms
+      local now = uv.now()
+      last_activity_ms = now
+      last_save_ms = now
     end,
     desc = "Track last save time for GhcidWatch",
   })
 end
 
---- Implements the new jump logic based on user state.
--- @return boolean true if the jump should be *prevented*, false if it should *proceed*.
+--- Implements the jump logic based on user state.
+--- @return boolean true if the jump should be *prevented*, false if it should *proceed*.
 local function should_prevent_jump()
+  -- **NEW LOGIC: Rule 1**
+  -- First, check if the user is currently in an ignored buffer.
+  -- If so, *never* jump, regardless of other state.
+  local current_bufnr = vim.api.nvim_get_current_buf()
+  if ignored_buffers[current_bufnr] then
+    return true -- Yes, prevent jump (in ignored buffer)
+  end
+
+  -- **ORIGINAL LOGIC: Rule 2**
+  -- If not in an ignored buffer, proceed with the activity/save logic.
   local now = uv.now()
   local idle_ms_threshold = (vim.g.ghcid_watch_idle_ms or 200)
 
@@ -239,17 +298,15 @@ local function should_prevent_jump()
   local is_user_active = time_since_activity < idle_ms_threshold
   local is_recent_save = time_since_save < idle_ms_threshold
 
-  -- **This is the core logic you requested:**
-  --
   -- We should NOT JUMP (prevent) *only* if:
   -- 1. The user is active (idle time < threshold)
   -- AND
   -- 2. The last save was NOT recent (save time >= threshold)
   if is_user_active and not is_recent_save then
-    return true -- Yes, prevent the jump
+    return true -- Yes, prevent jump (active, but not just saved)
   end
 
-  -- **Otherwise, we JUMP:**
+  -- Otherwise, we JUMP:
   -- Case 1: User is idle (is_user_active = false)
   -- Case 2: User is active AND just saved (is_user_active = true, is_recent_save = true)
   return false -- No, do not prevent jump
@@ -260,7 +317,7 @@ end
 -- ========================
 
 --- Starts watching the error file for changes.
--- @param errfile string|nil Path to error file. Defaults to "errors.err".
+--- @param errfile string|nil Path to error file. Defaults to "errors.err".
 function M.watch(errfile)
   errfile = errfile or "errors.err"
   if watcher then
@@ -271,24 +328,17 @@ function M.watch(errfile)
   watcher = uv.new_fs_poll()
   watcher:start(errfile, 300, vim.schedule_wrap(function()
     if vim.fn.filereadable(errfile) ~= 1 then return end
-
-    -- **NEW LOGIC HERE**
-    -- Pre-flight: Check if we should prevent the jump based on user activity/save state.
-    if should_prevent_jump() then
-      return
-    end
+    if should_prevent_jump() then return end
 
     -- Reload the quickfix list from the file
     cfile_with_ghc_efm(errfile)
 
     local sig, idx = pick_target_signature() -- prefer first E else first W
     if not sig or not idx then
-      -- No errors/warnings found, clear the last signature
       last_sig = nil
       return
     end
 
-    -- Only jump if the target error/warning is different from the last one
     if sig ~= last_sig then
       safe_jump_to_qf_item(idx)
       last_sig = sig
@@ -309,68 +359,6 @@ function M.unwatch()
 end
 
 -- ========================
--- ## Quickfix Focus (QoL)
--- ========================
-
---- Helper to get the canonical real path of a file.
--- @param path string
--- @return string|nil
-local function realpath(path)
-  if not path or path == "" then return nil end
-  return (vim.loop.fs_realpath(path) or path)
-end
-
---- Creates the :GhcidFocusHere user command.
--- Filters the quickfix list to only show items from the current file.
-local function setup_focus_here_command()
-  vim.api.nvim_create_user_command("GhcidFocusHere", function()
-    local curfile = realpath(vim.fn.expand("%:p"))
-    if not curfile or curfile == "" then
-      vim.notify("ghcid-rocket: no current file to focus", vim.log.levels.WARN)
-      return
-    end
-
-    local full_qf_list = vim.fn.getqflist()
-    if not full_qf_list or #full_qf_list == 0 then
-      vim.notify("ghcid-rocket: quickfix is empty", vim.log.levels.INFO)
-      return
-    end
-
-    -- Save the full list *before* filtering
-    last_full_qf = full_qf_list
-
-    local filtered = {}
-    for _, it in ipairs(full_qf_list) do
-      local f = it.filename ~= "" and it.filename or vim.fn.bufname(it.bufnr or 0)
-      if realpath(f) == curfile then
-        table.insert(filtered, it)
-      end
-    end
-
-    vim.fn.setqflist(filtered, "r")
-    vim.cmd("cwindow")
-    if #filtered > 0 then vim.cmd("silent! cc 1") end
-    vim.notify(("ghcid-rocket: focused to current file (%d items)"):format(#filtered))
-  end, {})
-end
-
---- Creates the :GhcidFocusAll user command.
--- Restores the full, unfiltered quickfix list.
-local function setup_focus_all_command()
-  vim.api.nvim_create_user_command("GhcidFocusAll", function()
-    if last_full_qf and #last_full_qf > 0 then
-      vim.fn.setqflist(last_full_qf, "r")
-      vim.cmd("cwindow | silent! cc 1")
-      vim.notify("ghcid-rocket: restored full quickfix list")
-      last_full_qf = nil -- Clear cache
-    else
-      -- Fallback: just reload from the error file
-      M.open_first_issue()
-    end
-  end, {})
-end
-
--- ========================
 -- ## Setup
 -- ========================
 
@@ -379,7 +367,6 @@ function M.setup()
   if M._setup_done then return end
   M._setup_done = true
 
-  -- Start tracking user activity and saves
   setup_user_state_tracking()
 
   -- Register user commands
@@ -389,14 +376,17 @@ function M.setup()
 
   vim.api.nvim_create_user_command("GW", function(opts)
     M.watch(opts.args ~= "" and opts.args or nil)
-  end, { nargs = "?" }) -- Allow optional errfile arg
+  end, { nargs = "?" })
 
-  vim.api.nvim_create_user_command("GU", function()
-    M.unwatch()
-  end, {})
+  vim.api.nvim_create_user_command("GU", M.unwatch, {})
 
-  setup_focus_here_command()
-  setup_focus_all_command()
+  -- New jump-back command
+  vim.api.nvim_create_user_command("GB", M.jump_back, {})
+
+  -- New ignore-buffer commands
+  vim.api.nvim_create_user_command("GIB", M.ignore_current_buffer, {})
+  vim.api.nvim_create_user_command("GUIB", M.unignore_current_buffer, {})
+  vim.api.nvim_create_user_command("GCIB", M.clear_ignored_buffers, {})
 
   -- QF window settings for better readability
   vim.api.nvim_create_autocmd("FileType", {
@@ -408,7 +398,7 @@ function M.setup()
     end,
   })
 
-  -- Optional status/debug helper
+-- Optional status/debug helper
   vim.api.nvim_create_user_command("GWStatus", function()
     local idle_ms = (vim.g.ghcid_watch_idle_ms or 200)
     local now = uv.now()
@@ -417,18 +407,36 @@ function M.setup()
     local is_active = since_activity < idle_ms
     local is_recent_save = since_save < idle_ms
 
-    local prevent_jump = is_active and not is_recent_save
+    -- Add the new check
+    local current_bufnr = vim.api.nvim_get_current_buf()
+    local is_in_ignored_buffer = ignored_buffers[current_bufnr] or false
+
+    local prevent_reason = "No"
+    if is_in_ignored_buffer then
+      prevent_reason = "YES (in ignored buffer)"
+    elseif is_active and not is_recent_save then
+      prevent_reason = "YES (active, no recent save)"
+    end
+
+    local ignore_count = 0
+    for _ in pairs(ignored_buffers) do
+      ignore_count = ignore_count + 1
+    end
 
     vim.notify(string.format(
       "GhcidWatch Status:\n" ..
       "  Idle Threshold: %d ms\n" ..
       "  Since Activity: %d ms (Active? %s)\n" ..
       "  Since Save:     %d ms (Recent? %s)\n" ..
+      "  Ignored Buffers: %d\n" ..
+      "  In Ignored Buf?: %s\n" ..
       "  => Preventing Jump? %s",
       idle_ms,
       since_activity, is_active and "YES" or "no",
       since_save, is_recent_save and "YES" or "no",
-      prevent_jump and "YES" or "no"
+      ignore_count,
+      is_in_ignored_buffer and "YES" or "no",
+      prevent_reason
     ))
   end, {})
 end
