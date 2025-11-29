@@ -418,9 +418,9 @@ function M.setup()
       prevent_reason = "YES (active, no recent save)"
     end
 
-    local ignore_count = 0
-    for _ in pairs(ignored_buffers) do
-      ignore_count = ignore_count + 1
+    local ignored_buffers_list = {}
+    for bufnr, _ in pairs(ignored_buffers) do
+        ignored_buffers_list[#ignored_buffers_list + 1] = bufnr
     end
 
     vim.notify(string.format(
@@ -428,13 +428,13 @@ function M.setup()
       "  Idle Threshold: %d ms\n" ..
       "  Since Activity: %d ms (Active? %s)\n" ..
       "  Since Save:     %d ms (Recent? %s)\n" ..
-      "  Ignored Buffers: %d\n" ..
+      "  Ignored Buffers: %s\n" ..
       "  In Ignored Buf?: %s\n" ..
       "  => Preventing Jump? %s",
       idle_ms,
       since_activity, is_active and "YES" or "no",
       since_save, is_recent_save and "YES" or "no",
-      ignore_count,
+      table.concat(ignored_buffers_list, ","),
       is_in_ignored_buffer and "YES" or "no",
       prevent_reason
     ))

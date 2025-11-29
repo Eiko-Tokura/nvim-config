@@ -120,8 +120,10 @@ call plug#begin('~/.vim/plugged')
 	Plug 'lambdalisue/suda.vim'
 
 	Plug 'madox2/vim-ai', {'branch': 'main'}
-	"Plug 'github/copilot.vim'
-	Plug 'supermaven-inc/supermaven-nvim'
+
+	Plug 'github/copilot.vim'
+	"Plug 'supermaven-inc/supermaven-nvim'
+	"
 	"Plug 'dense-analysis/neural'
         Plug 'elpiloto/significant.nvim'
 

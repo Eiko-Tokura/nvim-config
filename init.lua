@@ -22,7 +22,7 @@ require('plugin_opencode')
 require('plugin_mason')
 require('plugin_gen_commit')
 require('plugin_ghcid_rocket')
-require('plugin_supermaven')
+-- require('plugin_supermaven')
 require('plugin_send_selection')
 require('sql')
 vim.cmd [[
