@@ -1,240 +1,187 @@
---[[
-sql.lua ─ A tiny yet flexible Neovim helper that turns any buffer into an ad‑hoc SQL client.
-
-🎯 **Purpose**
-    • Let you select text in Neovim, hit a command (e.g. :SQL) and see the query result instantly.
-    • Work over SSH so you can query remote SQLite (or any shell‑invoked) DB without leaving the editor.
-    • Stay dependency‑free (pure Lua ‑ no plugins needed).
-
-📐 **Design at a glance**
-    1.  Collect SQL text from either the whole buffer or the current visual range.
-    2.  Ship that text to an external command (`ssh … sqlite3 …`).
-    3.  Drop the *stdout* back into Neovim using one of three targets:
-        • **scratch**  – append to a reusable split.
-        • **new**      – open a fresh split each time.
-        • **here**     – append right in the current buffer.
-    4.  Optionally add visual separators so successive results are easy to spot.
-
-    All heavy‑lifting happens in a single async callback so the UI never blocks.
-
-🛠  **Quickstart**
-    1.  Save this file under *lua/my/sql.lua*.
-    2.  `require("my.sql")` from your `init.lua` (or equivalent).
-    3.  Run `:SQL`, `:SQLN`, or `:SQLH` in any `*.sql` buffer.
-
-    (Feel free to map them, e.g. `nnoremap <leader>q :SQL<CR>`.)
-
-────────────────────────────────────────────────────────────────────────────]]
-
 local M = {}
 
 -- ╔═══════════════════════════════════════════════════════════════════════╗
--- ║                               CONFIG                                  ║
+-- ║                            CONFIGURATION                              ║
 -- ╚═══════════════════════════════════════════════════════════════════════╝
--- Everything here is safe to tweak without reading the rest of the file.
-M.cfg = {
-  -- Where to run the query --------------------------------------------------
-  host    = "Asuka",            -- SSH hostname (empty string → local)
-  db_path = "/opt/meowbot/meowbot.db",    -- Path *on the remote host* to the DB file
 
-  -- Visual separators -------------------------------------------------------
-  -- These strings are inserted *around each* query result when we **append**
-  -- to a buffer (scratch or here).  Multi‑line is fine – embed \n if you like.
-  separator_start_enabled = true,
-  separator_start         = "/*---ResultBlock---owo-----",            -- e.g. "-- ⇩⇩⇩ result ⇩⇩⇩"
-
-  separator_end_enabled   = true,
-  separator_end           = "-----ResultBlock---end---*/",  -- e.g. "-- ⇧⇧⇧ end ⇧⇧⇧"
-
-  -- Behaviour tweaks --------------------------------------------------------
-  trim_trailing_newlines       = true,   -- strip blank line(s) at EOF of stdout
-  newline_after_start_separator = false, -- add blank line *after* start separator
+M.profiles = {
+  default = { adapter = "sqlite_ssh", host = "Asuka", db_path = "/opt/meowbot/meowbot.db" },
+  prod    = { adapter = "pg_ssh",     host = "Asuka", user = "postgres", db_name = "production_db", format = "aligned" },
+  dev     = { adapter = "pg_local",   user = "postgres", db_name = "dev_db" },
 }
 
--- Handle of the reusable scratch buffer (nil until first use)
-M.last_buf = nil
+M.ui = {
+  sep_start = "/*--- Result: %s -----",
+  sep_end   = "----- End Result ---*/",
+}
+
+M.state = { last_scratch_buf = nil }
 
 -- ╔═══════════════════════════════════════════════════════════════════════╗
--- ║                     INTERNAL UTILITY FUNCTIONS                        ║
+-- ║                       1. PURE LOGIC (The Brains)                      ║
 -- ╚═══════════════════════════════════════════════════════════════════════╝
 
---[[
-collect_lines(range?) → string
-    • *range* is either nil (meaning the *whole* buffer) or a two‑element
-      0‑based, end‑exclusive table: {start_line, end_line}.
-    • Returns those lines concatenated by newlines — perfect as SQLite stdin.
+--[[ 
+  choose_profile(explicit, pinned, fallback) -> string
+  Decides which profile to use based on precedence.
+  Pure function: knows nothing about Vim, buffers, or global state.
 ]]
-local function collect_lines(range)
-  local s, e = unpack(range or { 0, -1 })
-  return table.concat(vim.api.nvim_buf_get_lines(0, s, e, false), "\n")
+local function choose_profile(explicit, pinned, fallback)
+  if explicit and explicit ~= "" then 
+    return explicit 
+  end
+  if pinned and pinned ~= "" then 
+    return pinned 
+  end
+  return fallback or "default"
 end
 
---[[
-ensure_scratch() → buffer handle
-    • Returns the existing scratch buffer if it’s still valid.
-    • Otherwise creates a new split + buffer, configures it (nofile, filetype
-      sql, no swap) and remembers it in M.last_buf.
-]]
-local function ensure_scratch()
-  if M.last_buf and vim.api.nvim_buf_is_valid(M.last_buf) then
-    return M.last_buf
-  end
+local adapters = {}
 
-  vim.cmd("new")                       -- open horizontal split
+function adapters.sqlite_ssh(p)
+  return { "ssh", p.host, "sqlite3", p.db_path }
+end
+
+function adapters.pg_local(p)
+  local cmd = { "psql", "-U", p.user, "-d", p.db_name, "-q" }
+  if p.format == "expanded" then table.insert(cmd, "-x") end
+  return cmd
+end
+
+function adapters.pg_ssh(p)
+  local psql_flags = "-U " .. p.user .. " -d " .. p.db_name .. " -q"
+  if p.format == "expanded" then psql_flags = psql_flags .. " -x" end
+  return { "ssh", p.host, "psql " .. psql_flags }
+end
+
+local function format_output(raw_text, profile_name)
+  local clean = raw_text:gsub("\n+$", "")
+  if clean == "" then clean = "(No output)" end
+  local lines = vim.split(clean, "\n", { plain = true })
+  
+  local out = {}
+  if M.ui.sep_start then table.insert(out, string.format(M.ui.sep_start, profile_name)) end
+  for _, line in ipairs(lines) do table.insert(out, line) end
+  if M.ui.sep_end then table.insert(out, M.ui.sep_end) end
+  return out
+end
+
+-- ╔═══════════════════════════════════════════════════════════════════════╗
+-- ║                       2. IMPURE SINKS (The Body)                      ║
+-- ╚═══════════════════════════════════════════════════════════════════════╝
+
+local sinks = {}
+
+local function get_scratch()
+  if M.state.last_scratch_buf and vim.api.nvim_buf_is_valid(M.state.last_scratch_buf) then
+    return M.state.last_scratch_buf
+  end
+  vim.cmd("new")
   local buf = vim.api.nvim_get_current_buf()
-  vim.bo[buf].buftype  = "nofile"
+  vim.bo[buf].buftype = "nofile"
   vim.bo[buf].filetype = "sql"
-  vim.bo[buf].swapfile = false
-  M.last_buf = buf
+  M.state.last_scratch_buf = buf
   return buf
 end
 
---[[
-write(buf, text, mode)
-    • *buf*  – destination buffer handle.
-    • *text* – raw stdout from sqlite (may end with \n\n).
-    • *mode* – "replace" → clobber whole buffer; "append" → add below.
-
-    Implements: trimming trailing newlines, inserting configurable separators.
-]]
-local function write(buf, text, mode)
-  ---------------------------------------------------------------------------
-  -- 1️⃣  Massage the raw stdout into a clean «lines» table
-  ---------------------------------------------------------------------------
-  if M.cfg.trim_trailing_newlines then
-    text = text:gsub("\n+$", "")         -- drop *all* trailing \n
-    -- Edge‑case: command produced only newlines → keep a single blank line
-    if text == "" then text = " " end
-  end
-
-  local lines = vim.split(text, "\n", { plain = true })
-
-  ---------------------------------------------------------------------------
-  -- 2️⃣  Choose append vs replace strategy
-  ---------------------------------------------------------------------------
-  if mode == "replace" then
-    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-    return
-  end
-
-  ---------------------------------------------------------------------------
-  -- 3️⃣  APPEND mode – insert start separator ▸ result ▸ end separator
-  ---------------------------------------------------------------------------
-  local dst = vim.api.nvim_buf_line_count(buf)  -- first free line (0‑based)
-
-  -- (a) optional start separator – only if buffer already has content
-  if dst > 0 and M.cfg.separator_start_enabled and M.cfg.separator_start ~= "" then
-    vim.api.nvim_buf_set_lines(buf, dst, dst, false,
-      vim.split(M.cfg.separator_start, "\n"))
-    dst = dst + 1
-
-    if M.cfg.newline_after_start_separator then
-      vim.api.nvim_buf_set_lines(buf, dst, dst, false, { "" })
-      dst = dst + 1
-    end
-  end
-
-  -- (b) the actual query result
-  vim.api.nvim_buf_set_lines(buf, dst, dst, false, lines)
-  dst = dst + #lines
-
-  -- (c) optional end separator (always shown if enabled)
-  if M.cfg.separator_end_enabled and M.cfg.separator_end ~= "" then
-    vim.api.nvim_buf_set_lines(buf, dst, dst, false,
-      vim.split(M.cfg.separator_end, "\n"))
-  end
+function sinks.scratch(lines)
+  local buf = get_scratch()
+  if #vim.fn.win_findbuf(buf) == 0 then vim.cmd("split | b" .. buf) end
+  vim.api.nvim_buf_set_lines(buf, -1, -1, false, lines)
 end
 
---[[
-run_query(sql_text, callback)
-    • Spawns the shell command *asynchronously* via vim.system().
-    • On completion invokes *callback* with the process result table.
-]]
-local function run_query(sql, cb)
-  local cmd = { "ssh", M.cfg.host, "sqlite3", M.cfg.db_path }
-  vim.system(cmd, { stdin = sql, text = true }, cb)
+function sinks.new_split(lines)
+  vim.cmd("vnew")
+  local buf = vim.api.nvim_get_current_buf()
+  vim.bo[buf].buftype = "nofile"
+  vim.bo[buf].filetype = "sql"
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+end
+
+function sinks.inline(lines)
+  local row = unpack(vim.api.nvim_win_get_cursor(0))
+  vim.api.nvim_buf_set_lines(0, row, row, false, lines)
 end
 
 -- ╔═══════════════════════════════════════════════════════════════════════╗
--- ║                        PUBLIC ENTRY POINT                             ║
+-- ║                       3. COORDINATOR (The Shell)                      ║
 -- ╚═══════════════════════════════════════════════════════════════════════╝
 
---[[
-M.run{ range?, target }
-    *range*  – nil or {start, finish} (0‑based).
-    *target* – "scratch" | "new" | "here".
-
-    Dispatches to run_query() and routes stdout to the chosen destination.
-]]
 function M.run(opts)
-  local sql    = collect_lines(opts.range)
-  local target = opts.target
+  -- A. GATHER STATE (Impure)
+  -- We extract all necessary state from the "world" here.
+  local arg_profile = opts.args
+  local buf_profile = vim.b.sql_profile
+  local default_profile = "default"
+  local input_range = opts.range or { 0, -1 }
 
-  -- 1️⃣ launch subprocess
-  run_query(sql, function(res)
-    -- 2️⃣ hop back to main loop – safe to touch UI state now
+  -- B. DECIDE (Pure)
+  -- We pass the gathered state to the pure function.
+  local profile_key = choose_profile(arg_profile, buf_profile, default_profile)
+
+  -- C. VALIDATE & PREPARE
+  local profile = M.profiles[profile_key]
+  if not profile then
+    return vim.notify("Unknown SQL profile: " .. tostring(profile_key), vim.log.levels.ERROR)
+  end
+
+  local cmd_builder = adapters[profile.adapter]
+  if not cmd_builder then
+    return vim.notify("Unknown adapter: " .. profile.adapter, vim.log.levels.ERROR)
+  end
+  local cmd = cmd_builder(profile)
+
+  -- D. EXECUTE (Impure/Async)
+  local s, e = unpack(input_range)
+  local input_sql = table.concat(vim.api.nvim_buf_get_lines(0, s, e, false), "\n")
+
+  vim.system(cmd, { stdin = input_sql, text = true }, function(obj)
     vim.schedule(function()
-      if res.code ~= 0 then
-        vim.notify(res.stderr, vim.log.levels.ERROR)
-        return
+      if obj.code ~= 0 then
+        vim.notify("SQL Error:\n" .. obj.stderr, vim.log.levels.ERROR)
+        if obj.stdout == "" then return end
       end
 
-      if target == "new" then                      -- :SQLN
-        vim.cmd("new")
-        local buf = vim.api.nvim_get_current_buf()
-        vim.bo[buf].buftype  = "nofile"
-        vim.bo[buf].filetype = "sql"
-        write(buf, res.stdout, "replace")
-        M.last_buf = buf     -- remember for :SQL reuse
-
-      elseif target == "here" then                  -- :SQLH
-        write(vim.api.nvim_get_current_buf(), res.stdout, "append")
-
-      else                                          -- default :SQL (scratch)
-        local buf = ensure_scratch()
-        -- If scratch buffer is hidden, open it in a split so user sees result
-        if #vim.fn.win_findbuf(buf) == 0 then
-          vim.cmd("split | b" .. buf)
-        end
-        write(buf, res.stdout, "append")
-      end
+      local formatted_lines = format_output(obj.stdout, profile_key)
+      local sink_fn = sinks[opts.target] or sinks.scratch
+      sink_fn(formatted_lines)
     end)
   end)
 end
 
 -- ╔═══════════════════════════════════════════════════════════════════════╗
--- ║                         USER COMMAND SETUP                           ║
+-- ║                           COMMAND SETUP                               ║
 -- ╚═══════════════════════════════════════════════════════════════════════╝
 
--- Convert UserCmd range info into the {start,finish} table expected upstream
-local function range_tbl(o)
-  if o.range == 0 then return nil end            -- no range → whole buffer
-  -- line1/line2 are 1‑based inclusive → convert to 0‑based exclusive
+local function get_range(o)
+  if o.range == 0 then return nil end
   return { o.line1 - 1, o.line2 }
 end
 
--- Main command: reuse or create a scratch window, *append* result
-vim.api.nvim_create_user_command("S", function(o)
-  M.run { range = range_tbl(o), target = "scratch" }
-end, {
-  range = true,
-  desc  = "Run SQL and append to last scratch buffer",
-})
+-- Commands passing args down to M.run
+vim.api.nvim_create_user_command("SQL", function(o)
+  M.run { range = get_range(o), target = "scratch", args = o.args }
+end, { range = true, nargs = "?" })
 
--- Always open a **new** scratch window, *replace* its content each time
-vim.api.nvim_create_user_command("SN", function(o)
-  M.run { range = range_tbl(o), target = "new" }
-end, {
-  range = true,
-  desc  = "Run SQL in a new scratch window",
-})
+vim.api.nvim_create_user_command("SQLN", function(o)
+  M.run { range = get_range(o), target = "new_split", args = o.args }
+end, { range = true, nargs = "?" })
 
--- Append result directly **here**, below current buffer content
-vim.api.nvim_create_user_command("SH", function(o)
-  M.run { range = range_tbl(o), target = "here" }
+vim.api.nvim_create_user_command("SQLH", function(o)
+  M.run { range = get_range(o), target = "inline", args = o.args }
+end, { range = true, nargs = "?" })
+
+-- SetSQL: Only updates the buffer state (vim.b.sql_profile)
+vim.api.nvim_create_user_command("SetSQL", function(o)
+  local name = o.args
+  if not M.profiles[name] then
+    return vim.notify("Profile '" .. name .. "' does not exist.", vim.log.levels.ERROR)
+  end
+  vim.b.sql_profile = name
+  vim.notify("Buffer pinned to SQL profile: " .. name)
 end, {
-  range = true,
-  desc  = "Run SQL and append in current buffer",
+  nargs = 1,
+  complete = function() return vim.tbl_keys(M.profiles) end,
 })
 
 return M
