@@ -28,5 +28,8 @@ require('sql')
 vim.cmd [[
   autocmd BufRead,BufNewFile *.lean lua require('plugin_lean')
 ]] -- only load lean plugin when opening lean files
+
+-- Load custom bindings
+require('binding_smart_join')
 --require('plugin_llm')
 --require('plugin_codecompanion')

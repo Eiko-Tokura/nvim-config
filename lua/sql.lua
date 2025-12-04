@@ -5,9 +5,23 @@ local M = {}
 -- ╚═══════════════════════════════════════════════════════════════════════╝
 
 M.profiles = {
-  default = { adapter = "sqlite_ssh", host = "Asuka", db_path = "/opt/meowbot/meowbot.db" },
-  prod    = { adapter = "pg_ssh",     host = "Asuka", user = "postgres", db_name = "production_db", format = "aligned" },
-  dev     = { adapter = "pg_local",   user = "postgres", db_name = "dev_db" },
+  default = {
+    adapter = "sqlite_ssh",
+    host = "Asuka",
+    db_path = "/opt/meowbot/meowbot.db",
+  },
+  prod    = {
+    adapter = "pg_ssh",
+    host = "Asuka",
+    user = "postgres",
+    db_name = "production_db",
+    format = "aligned"
+  },
+  dev     = {
+    adapter = "pg_local",
+    user = "postgres",
+    db_name = "dev_db"
+  },
 }
 
 M.ui = {
@@ -39,7 +53,21 @@ end
 local adapters = {}
 
 function adapters.sqlite_ssh(p)
-  return { "ssh", p.host, "sqlite3", p.db_path }
+  local cmd = { "ssh", p.host, "sqlite3" }
+
+  -- Inject flags based on profile format
+  if p.format == "expanded" then
+    table.insert(cmd, "-line")       -- Vertical output (like pg -x)
+  elseif p.format == "table" then
+    table.insert(cmd, "-column")     -- Aligned columns
+    table.insert(cmd, "-header")     -- Show headers
+  elseif p.format == "csv" then
+    table.insert(cmd, "-csv")        -- CSV mode
+    table.insert(cmd, "-header")
+  end
+
+  table.insert(cmd, p.db_path)
+  return cmd
 end
 
 function adapters.pg_local(p)
