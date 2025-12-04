@@ -31,5 +31,6 @@ vim.cmd [[
 
 -- Load custom bindings
 require('binding_smart_join')
+require('binding_visual_star')
 --require('plugin_llm')
 --require('plugin_codecompanion')
