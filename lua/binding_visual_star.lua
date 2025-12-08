@@ -3,7 +3,7 @@
 local function get_visual_selection()
     vim.cmd('noautocmd normal! "vy')
     local text = vim.fn.getreg('v')
-    
+
     -- IMPORTANT: Clean up the text for the command line
     -- 1. Escape backslashes first (so we don't double escape later)
     text = text:gsub("\\", "\\\\")
@@ -11,14 +11,19 @@ local function get_visual_selection()
     text = text:gsub("/", "\\/")
     -- 3. Replace newlines with \n so the command line doesn't break
     text = text:gsub("\n", "\\n")
-    
+
     return text
+end
+
+local function put_in_search_register(text)
+    vim.fn.setreg('/', '\\V' .. text)
 end
 
 -- Usage: Select text, press <Leader>r. 
 -- Result: :%s/\V<selection>/<cursor>
 vim.keymap.set("x", "<Leader>8", function()
     local text = get_visual_selection()
+    put_in_search_register(text)
     -- <Esc> exits visual mode so we can type the command
     -- \V tells Vim to treat the following text literally (not as regex)
     local cmd = ":%s/\\V" .. text .. "/"
@@ -35,6 +40,7 @@ end, { desc = "Search and Replace selection globally" })
 -- Result: :vim /\V<selection>/ **/*
 vim.keymap.set("x", "<Leader>*", function()
     local text = get_visual_selection()
+    put_in_search_register(text)
     -- Adjust this command if you use fzf, telescope, or standard grep
     -- This example uses standard standard vimgrep
     local cmd = ":vim /\\V" .. text .. "/ "
