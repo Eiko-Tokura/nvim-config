@@ -169,5 +169,5 @@ end
 vim.keymap.set('n', '<CR>', smart_enter_split, {
   noremap = true,
   silent = true,
-  desc = 'Split line at cursor (with o-indent)',
+  desc = 'Split line at cursor (with indent)',
 })
