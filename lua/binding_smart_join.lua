@@ -10,13 +10,55 @@ end
 ---@param next_line_trimmed string
 ---@return string glue Either `" "` or `""`.
 local function join_glue(prev_line, next_line_trimmed)
-  if next_line_trimmed == '' then
-    return ''
+  ---@class JoinGlueContext
+  ---@field prev_line string
+  ---@field next_line_trimmed string
+
+  ---@alias JoinGlueRule fun(ctx: JoinGlueContext): string|nil
+
+  ---@type JoinGlueContext
+  local ctx = { prev_line = prev_line, next_line_trimmed = next_line_trimmed }
+
+  ---@type JoinGlueRule[]
+  local rules = {
+    ---No content means no glue.
+    function(c)
+      if c.next_line_trimmed == '' then
+        return ''
+      end
+      return nil
+    end,
+
+    ---If the next token is a comma, do not add filler.
+    function(c)
+      if c.next_line_trimmed:sub(1, 1) == ',' then
+        return ''
+      end
+      return nil
+    end,
+
+    ---If previous line already ends in whitespace, no filler is needed.
+    function(c)
+      if c.prev_line:match('%s$') then
+        return ''
+      end
+      return nil
+    end,
+
+    ---Default: a single space as filler.
+    function(_c)
+      return ' '
+    end,
+  }
+
+  for _, rule in ipairs(rules) do
+    local res = rule(ctx)
+    if res ~= nil then
+      return res
+    end
   end
-  if prev_line:match('%s$') then
-    return ''
-  end
-  return ' '
+
+  return ''
 end
 
 ---@param prev_line string
@@ -40,6 +82,7 @@ end
 ---- Pressing `<BS>` on any column joins the current line into the previous line.
 ---- Leading whitespace on the current line is removed (indentation is dropped).
 ---- If the previous line does not end in whitespace, inserts a single space as filler.
+---- Exception: if the trimmed current line starts with `,`, does not insert filler.
 ---- Cursor stays on the same character (modulo removed indentation) after the join.
 local function smart_backspace_join()
   local buf = 0
