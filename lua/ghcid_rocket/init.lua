@@ -28,38 +28,40 @@ M.efm = table.concat({
   -- == Errors ==
 
   -- Matches: /path/to/File.hs:(79,12)-(85,13): error: ...
-  "%E%f:(%l,%c)-(%*[0-9],%*[0-9]): error: %m",
-  "%E%f:(%l,%c)-(%*[0-9],%*[0-9]):error: %m", -- no-space variant
+  -- FIX: We use %n (Error Number) to reliably swallow the end-line/col integers
+  -- instead of the fragile %*[0-9] scanset.
+  "%E%f:(%l,%c)-(%n,%n): error: %m",
+  "%E%f:(%l,%c)-(%n,%n):error: %m",
 
   -- Matches: /path/to/File.hs:45:12-16: error: ...
-  "%E%f:%l:%c-%*[0-9]: error: %m",
-  "%E%f:%l:%c-%*[0-9]:error: %m", -- no-space variant
+  "%E%f:%l:%c-%n: error: %m",
+  "%E%f:%l:%c-%n:error: %m",
 
   -- Matches: /path/to/File.hs:(79,12): error: ... (single tuple)
   "%E%f:(%l,%c): error: %m",
-  "%E%f:(%l,%c):error: %m", -- no-space variant
+  "%E%f:(%l,%c):error: %m",
 
   -- Matches: /path/to/File.hs:45:12: error: ... (simple col)
   "%E%f:%l:%c: error: %m",
-  "%E%f:%l:%c:error: %m", -- no-space variant
+  "%E%f:%l:%c:error: %m",
 
   -- == Warnings ==
 
   -- Matches: /path/to/File.hs:(29,15)-(33,2): warning: ...
-  "%W%f:(%l,%c)-(%*[0-9],%*[0-9]): warning: %m",
-  "%W%f:(%l,%c)-(%*[0-9],%*[0-9]):warning: %m", -- no-space variant
+  "%W%f:(%l,%c)-(%n,%n): warning: %m",
+  "%W%f:(%l,%c)-(%n,%n):warning: %m",
 
   -- Matches: /path/to/File.hs:3:1-27: warning: ...
-  "%W%f:%l:%c-%*[0-9]: warning: %m",
-  "%W%f:%l:%c-%*[0-9]:warning: %m", -- no-space variant
+  "%W%f:%l:%c-%n: warning: %m",
+  "%W%f:%l:%c-%n:warning: %m",
 
   -- Matches: /path/to/File.hs:(29,15): warning: ... (single tuple)
   "%W%f:(%l,%c): warning: %m",
-  "%W%f:(%l,%c):warning: %m", -- no-space variant
+  "%W%f:(%l,%c):warning: %m",
 
   -- Matches: /path/to/File.hs:3:1: warning: ... (simple col)
   "%W%f:%l:%c: warning: %m",
-  "%W%f:%l:%c:warning: %m", -- no-space variant
+  "%W%f:%l:%c:warning: %m",
 
   -- == Continuations (Order is important!) ==
 
@@ -67,14 +69,12 @@ M.efm = table.concat({
   "%C%\\d%# | %m",
 
   -- Matches:    |            ^^^^^
-  -- (Note: also catches `  | ^^^^^^^^^...` lines)
   "%C%\\s%#| %m",
 
   -- Matches:     • Couldn't match...
   "%C%\\s%#• %m",
 
-  -- Matches:       from the context: ...
-  -- (Catches any other indented line as a fallback)
+  -- Matches any other indented line (fallback)
   "%C%\\s%#%m",
 }, ",")
 
