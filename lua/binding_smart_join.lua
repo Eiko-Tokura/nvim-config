@@ -1,27 +1,75 @@
--- Function to delete text before cursor and join with previous line
-local function smart_delete_prev_line()
-    -- Get the current cursor position (row is 1-based)
-    local current_row = vim.api.nvim_win_get_cursor(0)[1]
-
-    -- Guard clause: Do nothing if we are on the first line
-    if current_row == 1 then
-        return
-    end
-
-    -- Create an undo block so this entire sequence counts as one 'u' (undo)
-    -- Note: 'normal!' handles this atomically usually, but good practice in scripts
-    
-    -- Execute the sequence:
-    -- 1. "_d0 : Delete from cursor to start of line into black hole register (doesn't clog clipboard)
-    -- 2. k    : Move up one line
-    -- 3. gJ   : Join the current line (now empty of pre-cursor text) with the one above WITHOUT adding a space
-    vim.cmd('normal! "_d0kgJ')
+---@param s string
+---@return string trimmed
+---@return integer removed_bytes
+local function trim_left_whitespace(s)
+  local trimmed = s:gsub('^%s+', '')
+  return trimmed, #s - #trimmed
 end
 
--- Map the function to a key
--- I've set it to <Leader>J, but <Backspace> is also a very popular choice for this behavior
-vim.keymap.set('n', '<BS>', smart_delete_prev_line, { 
-    noremap = true, 
-    silent = true, 
-    desc = "Delete to start of line and join with previous line" 
+---@param prev_line string
+---@param next_line_trimmed string
+---@return string glue Either `" "` or `""`.
+local function join_glue(prev_line, next_line_trimmed)
+  if next_line_trimmed == '' then
+    return ''
+  end
+  if prev_line:match('%s$') then
+    return ''
+  end
+  return ' '
+end
+
+---@param prev_line string
+---@param glue string
+---@param cursor_col integer 0-based byte column in the current line
+---@param removed_indent_bytes integer
+---@return integer new_cursor_col 0-based byte column in the joined line
+local function compute_joined_cursor_col(prev_line, glue, cursor_col, removed_indent_bytes)
+  local prev_len = #prev_line
+  local glue_len = #glue
+  local shifted = cursor_col - removed_indent_bytes
+  if shifted < 0 then
+    shifted = 0
+  end
+  return prev_len + glue_len + shifted
+end
+
+---Smart backspace join for normal mode.
+---
+---Semantics:
+---- Pressing `<BS>` on any column joins the current line into the previous line.
+---- Leading whitespace on the current line is removed (indentation is dropped).
+---- If the previous line does not end in whitespace, inserts a single space as filler.
+---- Cursor stays on the same character (modulo removed indentation) after the join.
+local function smart_backspace_join()
+  local buf = 0
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local row_1based, col_0based = cursor[1], cursor[2]
+
+  if row_1based == 1 then
+    vim.cmd('normal! h')
+    return
+  end
+
+  local prev_idx0 = row_1based - 2
+  local curr_idx0 = row_1based - 1
+
+  local prev_line = vim.api.nvim_buf_get_lines(buf, prev_idx0, prev_idx0 + 1, false)[1] or ''
+  local curr_line = vim.api.nvim_buf_get_lines(buf, curr_idx0, curr_idx0 + 1, false)[1] or ''
+
+  local curr_trimmed, removed_indent_bytes = trim_left_whitespace(curr_line)
+  local glue = join_glue(prev_line, curr_trimmed)
+  local joined = prev_line .. glue .. curr_trimmed
+
+  -- Replace the two-line range with the joined line in a single undo step.
+  vim.api.nvim_buf_set_lines(buf, prev_idx0, curr_idx0 + 1, false, { joined })
+
+  local new_col = compute_joined_cursor_col(prev_line, glue, col_0based, removed_indent_bytes)
+  vim.api.nvim_win_set_cursor(0, { row_1based - 1, new_col })
+end
+
+vim.keymap.set('n', '<BS>', smart_backspace_join, {
+  noremap = true,
+  silent = true,
+  desc = 'Join current line into previous (with spacer)',
 })
