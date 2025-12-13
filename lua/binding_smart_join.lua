@@ -116,3 +116,58 @@ vim.keymap.set('n', '<BS>', smart_backspace_join, {
   silent = true,
   desc = 'Join current line into previous (with spacer)',
 })
+
+---@param line string
+---@param col_0based integer 0-based byte column
+---@return string before
+---@return string here_and_after
+local function split_at_byte_col(line, col_0based)
+  local byte_len = #line
+  local col = col_0based
+  if col < 0 then
+    col = 0
+  elseif col > byte_len then
+    col = byte_len
+  end
+  return line:sub(1, col), line:sub(col + 1)
+end
+
+---@param buf integer
+---@param row_1based integer
+---@return string line
+local function get_line(buf, row_1based)
+  return (vim.api.nvim_buf_get_lines(buf, row_1based - 1, row_1based, false)[1] or '')
+end
+
+---@param s string
+---@return string leading_whitespace
+local function leading_whitespace(s)
+  return (s:match('^%s*') or '')
+end
+
+---Smart enter split for normal mode.
+---
+---Semantics:
+---- Pressing `<CR>` splits the current line at the cursor byte column.
+---- The `here_and_after` part is moved to the next line.
+---- The next line is prefixed with the current line's indentation.
+---- Cursor ends at the start of `here_and_after` on the new line.
+local function smart_enter_split()
+  local buf = 0
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local row_1based, col_0based = cursor[1], cursor[2]
+
+  local line = get_line(buf, row_1based)
+  local before, here_and_after = split_at_byte_col(line, col_0based)
+  local indent_prefix = leading_whitespace(line)
+
+  -- Replace the current line with two lines in a single undo step.
+  vim.api.nvim_buf_set_lines(buf, row_1based - 1, row_1based, false, { before, indent_prefix .. here_and_after })
+  vim.api.nvim_win_set_cursor(0, { row_1based + 1, #indent_prefix })
+end
+
+vim.keymap.set('n', '<CR>', smart_enter_split, {
+  noremap = true,
+  silent = true,
+  desc = 'Split line at cursor (with o-indent)',
+})
