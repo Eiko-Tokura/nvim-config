@@ -21,6 +21,14 @@ local function join_glue(prev_line, next_line_trimmed)
 
   ---@type JoinGlueRule[]
   local rules = {
+    ---If the previous line is empty, do not add filler.
+    function(c)
+      if c.prev_line == '' then
+        return ''
+      end
+      return nil
+    end,
+
     ---No content means no glue.
     function(c)
       if c.next_line_trimmed == '' then
@@ -83,6 +91,7 @@ end
 ---- Leading whitespace on the current line is removed (indentation is dropped).
 ---- If the previous line does not end in whitespace, inserts a single space as filler.
 ---- Exception: if the trimmed current line starts with `,`, does not insert filler.
+---- Exception: if the previous line is empty, does not insert filler.
 ---- Cursor stays on the same character (modulo removed indentation) after the join.
 local function smart_backspace_join()
   local buf = 0
