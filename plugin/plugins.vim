@@ -98,7 +98,7 @@ if !filereadable(vimplug_exists)
   autocmd VimEnter * PlugInstall
 endif
 
-call plug#begin('~/.vim/plugged')
+call plug#begin('~/.vim/plugged/')
         Plug 'MunifTanjim/nui.nvim'
 	Plug 'rhysd/vim-grammarous'
 	Plug 'derekelkins/agda-vim'
@@ -115,10 +115,9 @@ call plug#begin('~/.vim/plugged')
 	Plug 'nvim-lua/plenary.nvim'
 	Plug 'nvim-telescope/telescope.nvim'
 	
-	Plug 'nvim-treesitter/nvim-treesitter', { 'do': ':TSUpdate' }
+	Plug 'nvim-treesitter/nvim-treesitter', { 'do': ':TSUpdate' , 'branch': 'master' }
 
 	Plug 'lambdalisue/suda.vim'
-
 	Plug 'madox2/vim-ai', {'branch': 'main'}
 
 	Plug 'github/copilot.vim'
@@ -183,6 +182,10 @@ call plug#begin('~/.vim/plugged')
 	Plug 'NickvanDyke/opencode.nvim'
 
 	Plug 'yuratomo/w3m.vim'
+
+	Plug 'Eiko-Tokura/darcssigns.nvim'
+	" Experimental
+	" Plug '/home/eiko/Documents/Lua/darcssigns'
 call plug#end()
 
 let g:coqtail_noimap = 1
