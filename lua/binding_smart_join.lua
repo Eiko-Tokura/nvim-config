@@ -175,7 +175,7 @@ local function smart_enter_split()
   vim.api.nvim_win_set_cursor(0, { row_1based + 1, #indent_prefix })
 end
 
-vim.keymap.set('n', '<CR>', smart_enter_split, {
+vim.keymap.set('n', '<C-CR>', smart_enter_split, {
   noremap = true,
   silent = true,
   desc = 'Split line at cursor (with indent)',

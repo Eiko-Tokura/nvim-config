@@ -181,7 +181,7 @@ call plug#begin('~/.vim/plugged/')
 
 	Plug 'NickvanDyke/opencode.nvim'
 
-	Plug 'yuratomo/w3m.vim'
+	"Plug 'yuratomo/w3m.vim'
 
 	Plug 'Eiko-Tokura/darcssigns.nvim'
 	" Experimental
@@ -339,6 +339,7 @@ xmap <leader><S-F>  <Plug>(coc-format-selected)
 nmap <leader><S-F>  <Plug>(coc-format-selected)
 " /home/eiko/.ghcup/bin/
   call coc#config('suggest.noselect', "true")
+  " haskell
   call coc#config('languageserver', {
 			  \  'haskell': {
   			  \    "command": "haskell-language-server-wrapper",
