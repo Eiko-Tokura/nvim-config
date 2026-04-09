@@ -115,7 +115,7 @@ call plug#begin('~/.vim/plugged/')
 	Plug 'nvim-lua/plenary.nvim'
 	Plug 'nvim-telescope/telescope.nvim'
 	
-	Plug 'nvim-treesitter/nvim-treesitter', { 'do': ':TSUpdate' , 'branch': 'master' }
+	Plug 'nvim-treesitter/nvim-treesitter', { 'do': ':TSUpdate' , 'branch': 'main' }
 
 	Plug 'lambdalisue/suda.vim'
 	Plug 'madox2/vim-ai', {'branch': 'main'}
