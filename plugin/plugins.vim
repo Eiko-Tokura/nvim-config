@@ -120,7 +120,7 @@ call plug#begin('~/.vim/plugged/')
 	Plug 'lambdalisue/suda.vim'
 	Plug 'madox2/vim-ai', {'branch': 'main'}
 
-	Plug 'github/copilot.vim'
+	"Plug 'github/copilot.vim'
 	"Plug 'supermaven-inc/supermaven-nvim'
 	"
 	"Plug 'dense-analysis/neural'
@@ -177,7 +177,7 @@ call plug#begin('~/.vim/plugged/')
 	Plug 'echasnovski/mini.pick'
 	Plug 'ibhagwan/fzf-lua'
 	Plug 'nvim-tree/nvim-web-devicons'
-	Plug 'yetone/avante.nvim', { 'branch': 'main', 'do': 'make' }
+	"Plug 'yetone/avante.nvim', { 'branch': 'main', 'do': 'make' }
 
 	Plug 'NickvanDyke/opencode.nvim'
 

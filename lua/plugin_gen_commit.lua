@@ -3,7 +3,7 @@ require('gen_commit').setup({
   backends = {
     ollama = {
       ssh_host = "AsukaLocal",
-      model    = "qwen3:30b",
+      model    = "glm-5.1:cloud",
       args     = { "--hidethinking" },
     },
     llm = {

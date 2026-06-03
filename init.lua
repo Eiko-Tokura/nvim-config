@@ -17,7 +17,7 @@ require('latex-shortcuts')
 -- Load the plugin settings
 require('plugin_treesitter')
 require('plugin_gitsigns')
-require('plugin_avante')
+-- require('plugin_avante')
 require('plugin_opencode')
 require('plugin_mason')
 require('plugin_gen_commit')
